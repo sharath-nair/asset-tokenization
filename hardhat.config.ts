@@ -1,5 +1,6 @@
 import { HardhatUserConfig } from "hardhat/config";
 import "@nomicfoundation/hardhat-toolbox";
+import "@typechain/hardhat"; // Import TypeChain plugin
 import "dotenv/config"; // Loads environment variables from .env file
 
 const SEPOLIA_RPC_URL = process.env.SEPOLIA_RPC_URL || "ethereum-sepolia-rpc.publicnode.com"; // Fallback or default
@@ -12,14 +13,15 @@ const config: HardhatUserConfig = {
   networks: {
     hardhat: {
       // Configuration for the local Hardhat Network
+      chainId: 31337,
     },
-    sepolia: {
-      url: SEPOLIA_RPC_URL,
-      accounts: PRIVATE_KEY !== undefined ? [PRIVATE_KEY] : [],
-      chainId: 11155111, // Sepolia's chain ID
-      // gasPrice: 20000000000, // Optional
-      // gas: 6000000, // Optional
-    },
+    // sepolia: {
+    //   url: SEPOLIA_RPC_URL,
+    //   accounts: PRIVATE_KEY !== undefined ? [PRIVATE_KEY] : [],
+    //   chainId: 11155111, // Sepolia's chain ID
+    //   // gasPrice: 20000000000, // Optional
+    //   // gas: 6000000, // Optional
+    // },
   },
   etherscan: {
     apiKey: {
@@ -29,6 +31,12 @@ const config: HardhatUserConfig = {
   },
   sourcify: {
     enabled: true,
+  },
+  typechain: {
+    outDir: "typechain", // Output directory for type files
+    target: "ethers-v6",
+    alwaysGenerateOverloads: false, // Optional: To simplify generated types by not always creating overloaded functions
+    // externalArtifacts: ['externalArtifacts/*.json'], // Optional: For external contracts
   },
   // paths: {
   //   sources: "./contracts",

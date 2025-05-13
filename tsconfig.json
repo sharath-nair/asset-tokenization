@@ -1,0 +1,14 @@
+{
+  "compilerOptions": {
+    "target": "es2020",
+    "module": "nodenext",
+    "strict": true,
+    "esModuleInterop": true,
+    "outDir": "dist",
+    "declaration": true,
+    "resolveJsonModule": true,
+    "moduleResolution": "nodenext",
+  },
+  "include": ["./scripts", "./test", "./typechain", "./deploy"],
+  "files": ["./hardhat.config.ts"]
+}
