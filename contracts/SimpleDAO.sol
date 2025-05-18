@@ -6,7 +6,7 @@ import "@openzeppelin/contracts/token/ERC20/IERC20.sol";
 /**
  * @title SimpleDAO
  * @author SRN
- * @notice A basic DAO contract for PropertyToken holders to create and vote on proposals.
+ * @notice A basic DAO contract with supermajority and quorum voting for PropertyToken holders to create and vote on proposals.
  * @dev Voting power is based on token balance at the time of voting.
  * Proposal execution is intended to be determined off-chain based on vote outcomes for this MVP.
  */
@@ -31,6 +31,8 @@ contract SimpleDAO {
 
     uint256 public immutable MINIMUM_TOKENS_TO_PROPOSE; // Minimum tokens required to create a proposal
     uint256 public immutable votingPeriodSeconds;       // Duration of the voting period
+    uint8 public immutable SUPERMAJORITY_PERCENTAGE_OF_VOTES_CAST; // e.g., 75 for 75%
+    uint8 public immutable QUORUM_PERCENTAGE_OF_TOTAL_SUPPLY;   // e.g., 10 for 10% of total supply must vote
 
     event ProposalCreated(
         uint256 indexed proposalId,
@@ -39,34 +41,40 @@ contract SimpleDAO {
         uint256 voteStartTimestamp,
         uint256 voteEndTimestamp
     );
-
     event Voted(
         uint256 indexed proposalId,
         address indexed voter,
         bool inFavor,
         uint256 voteWeight
     );
-
-    event ProposalMarkedExecuted(uint256 indexed proposalId);
+    event ProposalMarkedExecuted(uint256 indexed proposalId, bool passed);
 
     /**
-     * @notice Constructor initializes the DAO with the governance token and voting parameters.
-     * @param _propertyTokenAddress The address of the ERC20 PropertyToken.
-     * @param _minTokensToPropose Minimum token balance required to create a proposal (in smallest unit, e.g., wei).
-     * @param _votingPeriodInSeconds The duration for which voting on a new proposal will be open.
+     * @param _propertyTokenAddress Address of the ERC20 PropertyToken.
+     * @param _minTokensToPropose Minimum tokens required to create a proposal.
+     * @param _votingPeriodInSeconds Duration for voting.
+     * @param _supermajorityVotePercentage Required percentage of 'For' votes out of total votes cast (e.g., 66 for 66%).
+     * @param _quorumPercentage Minimum percentage of total token supply that must participate in voting (e.g., 10 for 10%). Set to 0 to disable quorum.
      */
     constructor(
         address _propertyTokenAddress,
         uint256 _minTokensToPropose,
-        uint256 _votingPeriodInSeconds
+        uint256 _votingPeriodInSeconds,
+        uint8 _supermajorityVotePercentage,
+        uint8 _quorumPercentage
     ) {
-        require(_propertyTokenAddress != address(0), "SimpleDAO: PropertyToken address cannot be zero");
-        require(_minTokensToPropose > 0, "SimpleDAO: Minimum tokens to propose must be positive");
-        require(_votingPeriodInSeconds > 0, "SimpleDAO: Voting period must be positive");
+        require(_propertyTokenAddress != address(0), "DAO: PropertyToken address cannot be zero");
+        require(_minTokensToPropose > 0, "DAO: Min tokens to propose must be > 0");
+        require(_votingPeriodInSeconds > 0, "DAO: Voting period must be > 0");
+        require(_supermajorityVotePercentage > 50 && _supermajorityVotePercentage <= 100, "DAO: Supermajority must be > 50 and <= 100");
+        require(_quorumPercentage <= 100, "DAO: Quorum percentage cannot exceed 100");
+
 
         propertyToken = IERC20(_propertyTokenAddress);
         MINIMUM_TOKENS_TO_PROPOSE = _minTokensToPropose;
         votingPeriodSeconds = _votingPeriodInSeconds;
+        SUPERMAJORITY_PERCENTAGE_OF_VOTES_CAST = _supermajorityVotePercentage;
+        QUORUM_PERCENTAGE_OF_TOTAL_SUPPLY = _quorumPercentage;
     }
 
     /**
@@ -75,15 +83,14 @@ contract SimpleDAO {
      * @return proposalId The ID of the newly created proposal.
      */
     function createProposal(string memory _description) public returns (uint256 proposalId) {
-        require(bytes(_description).length > 0, "SimpleDAO: Description cannot be empty");
+        require(bytes(_description).length > 0, "DAO: Description cannot be empty");
         uint256 proposerBalance = propertyToken.balanceOf(msg.sender);
-        require(proposerBalance >= MINIMUM_TOKENS_TO_PROPOSE, "SimpleDAO: Insufficient tokens to create proposal");
+        require(proposerBalance >= MINIMUM_TOKENS_TO_PROPOSE, "DAO: Insufficient tokens to create proposal");
 
         proposalId = proposals.length;
         uint256 voteStart = block.timestamp;
         uint256 voteEnd = block.timestamp + votingPeriodSeconds;
 
-        // Note: Mappings inside structs (hasVoted, voteWeightCast) are automatically initialized.
         proposals.push(
             Proposal({
                 id: proposalId,
@@ -94,8 +101,7 @@ contract SimpleDAO {
                 votesFor: 0,
                 votesAgainst: 0,
                 executed: false
-                // Mappings 'hasVoted' and 'voteWeightCast' are part of the struct type
-                // and will be default initialized for this new proposal instance.
+                // Mappings inside structs (hasVoted, voteWeightCast) are automatically initialized.
             })
         );
 
@@ -110,15 +116,15 @@ contract SimpleDAO {
      * @param _inFavor True to vote in favor, false to vote against.
      */
     function vote(uint256 _proposalId, bool _inFavor) public {
-        require(_proposalId < proposals.length, "SimpleDAO: Proposal does not exist");
-        Proposal storage currentProposal = proposals[_proposalId]; // Use storage pointer
+        require(_proposalId < proposals.length, "DAO: Proposal does not exist");
+        Proposal storage currentProposal = proposals[_proposalId];
 
-        require(block.timestamp >= currentProposal.voteStartTimestamp, "SimpleDAO: Voting has not started yet"); // Though start is immediate
-        require(block.timestamp <= currentProposal.voteEndTimestamp, "SimpleDAO: Voting period has ended");
-        require(!currentProposal.hasVoted[msg.sender], "SimpleDAO: Already voted on this proposal");
+        require(block.timestamp >= currentProposal.voteStartTimestamp, "DAO: Voting has not started");
+        require(block.timestamp <= currentProposal.voteEndTimestamp, "DAO: Voting period has ended");
+        require(!currentProposal.hasVoted[msg.sender], "DAO: Already voted on this proposal");
 
         uint256 voterBalance = propertyToken.balanceOf(msg.sender);
-        require(voterBalance > 0, "SimpleDAO: Must hold tokens to vote");
+        require(voterBalance > 0, "DAO: Must hold tokens to vote");
 
         currentProposal.hasVoted[msg.sender] = true;
         currentProposal.voteWeightCast[msg.sender] = voterBalance;
@@ -150,7 +156,7 @@ contract SimpleDAO {
             bool executed
         )
     {
-        require(_proposalId < proposals.length, "SimpleDAO: Proposal does not exist");
+        require(_proposalId < proposals.length, "DAO: Proposal does not exist");
         Proposal storage p = proposals[_proposalId];
         return (
             p.id,
@@ -164,41 +170,58 @@ contract SimpleDAO {
         );
     }
 
-    /**
-     * @notice Checks if a proposal is considered passed based on a simple majority
-     * after the voting period has ended.
-     * @param _proposalId The ID of the proposal.
-     * @return True if the proposal passed (votesFor > votesAgainst and voting has ended).
-     * @dev Does not consider quorum for this MVP.
-     */
-    function isProposalPassed(uint256 _proposalId) public view returns (bool) {
-        require(_proposalId < proposals.length, "SimpleDAO: Proposal does not exist");
+    function getProposalOutcome(uint256 _proposalId) public view returns (bool passed, uint256 totalVotesCast, uint256 requiredQuorum) {
+        require(_proposalId < proposals.length, "DAO: Proposal does not exist");
         Proposal storage p = proposals[_proposalId];
 
         if (block.timestamp <= p.voteEndTimestamp) {
-            return false; // Voting period not yet over
+            return (false, p.votesFor + p.votesAgainst, 0); // Voting not ended, quorum not yet relevant for pass state
         }
-        return p.votesFor > p.votesAgainst;
+
+        totalVotesCast = p.votesFor + p.votesAgainst;
+
+        if (QUORUM_PERCENTAGE_OF_TOTAL_SUPPLY > 0) {
+            uint256 tokenTotalSupply = propertyToken.totalSupply();
+            if (tokenTotalSupply == 0) return (false, totalVotesCast, 0); // Avoid division by zero
+            requiredQuorum = (tokenTotalSupply * QUORUM_PERCENTAGE_OF_TOTAL_SUPPLY) / 100;
+            if (totalVotesCast < requiredQuorum) {
+                return (false, totalVotesCast, requiredQuorum); // Quorum not met
+            }
+        } else {
+            requiredQuorum = 0; // Quorum disabled
+        }
+
+        if (totalVotesCast == 0) { // No votes, cannot pass supermajority
+             return (false, totalVotesCast, requiredQuorum);
+        }
+
+        // Supermajority check: (votesFor * 100) / totalVotesCast >= SUPERMAJORITY_PERCENTAGE_OF_VOTES_CAST
+        // To avoid issues with percentages that are not whole numbers and to ensure precision:
+        // votesFor * 100 >= SUPERMAJORITY_PERCENTAGE_OF_VOTES_CAST * totalVotesCast
+        bool supermajorityMet = (p.votesFor * 100) >= (SUPERMAJORITY_PERCENTAGE_OF_VOTES_CAST * totalVotesCast);
+        passed = supermajorityMet && p.votesFor > 0; // Must have at least some 'for' votes and meet supermajority
+
+        return (passed, totalVotesCast, requiredQuorum);
     }
 
     /**
      * @notice Marks a proposal as executed.
-     * For MVP, this is a manual step to signify off-chain action was taken.
+     * For PoC, this is a manual step to signify off-chain action was taken.
      * It requires the proposal to have passed according to `isProposalPassed` logic.
      * @param _proposalId The ID of the proposal to mark as executed.
      * @dev In a more advanced system, this might be restricted or trigger on-chain actions.
      */
     function markAsExecuted(uint256 _proposalId) public {
-        require(_proposalId < proposals.length, "SimpleDAO: Proposal does not exist");
+        require(_proposalId < proposals.length, "DAO: Proposal does not exist");
         Proposal storage currentProposal = proposals[_proposalId];
 
-        require(!currentProposal.executed, "SimpleDAO: Proposal already marked as executed");
-        // Ensure voting has ended before checking pass status for execution marking
-        require(block.timestamp > currentProposal.voteEndTimestamp, "SimpleDAO: Voting period not yet ended");
-        require(currentProposal.votesFor > currentProposal.votesAgainst, "SimpleDAO: Proposal must have passed to be marked executed");
+        require(!currentProposal.executed, "DAO: Proposal already marked as executed");
+
+        (bool passed, , ) = getProposalOutcome(_proposalId); // Use the outcome function
+        require(passed, "DAO: Proposal must have passed to be marked executed");
 
         currentProposal.executed = true;
-        emit ProposalMarkedExecuted(_proposalId);
+        emit ProposalMarkedExecuted(_proposalId, passed);
     }
 
     /**
