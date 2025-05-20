@@ -4,10 +4,6 @@ import { PropertyToken, PropertyToken__factory } from "../typechain";
 
 async function main() {
   const [deployer]: Signer[] = await ethers.getSigners(); // Get the deployer account
-
-  let contract: BaseContract; // Using BaseContract for broader compatibility initially
-  // let contractFactory: ContractFactory;
-
   const deployerAddress = await deployer.getAddress();
 
   // Deploy the PropertyToken ERC20
